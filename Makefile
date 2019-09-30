@@ -88,7 +88,7 @@ BMP_PORT	?=
 ###############################################################################
 # Source files
 
-OBJS		+= $(BINARY).o
+OBJS		+= $(BINARY).o usb.o
 
 
 ifeq ($(strip $(OPENCM3_DIR)),)
@@ -119,7 +119,7 @@ endef
 
 ifeq ($(strip $(DEVICE)),)
 # Old style, assume LDSCRIPT exists
-DEFS		+= -I$(OPENCM3_DIR)/include
+DEFS		+= -I$(OPENCM3_DIR)/include -I.
 LDFLAGS		+= -L$(OPENCM3_DIR)/lib
 LDLIBS		+= -l$(LIBNAME)
 LDSCRIPT	?= $(BINARY).ld
@@ -139,7 +139,7 @@ EXAMPLES_SCRIPT_DIR	= $(OPENCM3_DIR)/../scripts
 
 TGT_CFLAGS	+= $(OPT) $(CSTD) $(DEBUG)
 TGT_CFLAGS	+= $(ARCH_FLAGS)
-TGT_CFLAGS	+= -Wextra -Wshadow -Wimplicit-function-declaration
+TGT_CFLAGS	+= -Werror -Wextra -Wshadow -Wimplicit-function-declaration
 TGT_CFLAGS	+= -Wredundant-decls -Wmissing-prototypes -Wstrict-prototypes
 TGT_CFLAGS	+= -fno-common -ffunction-sections -fdata-sections
 

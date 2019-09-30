@@ -1,10 +1,7 @@
 /*
  * This file is part of the libopencm3 project.
  *
- * Copyright (C) 2009 Uwe Hermann <uwe@hermann-uwe.de>
- * Copyright (C) 2011 Stephen Caudle <scaudle@doceme.com>
- * Modified by Fernando Cortes <fermando.corcam@gmail.com>
- * modified by Guillermo Rivera <memogrg@gmail.com>
+ * Copyright (C) 2010 Gareth McMullin <gareth@blacksphere.co.nz>
  *
  * This library is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -20,8 +17,13 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdlib.h>
+
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
+#include <libopencm3/usb/usbd.h>
+
+#include "usb.h"
 
 static void gpio_setup(void)
 {
@@ -34,18 +36,20 @@ static void gpio_setup(void)
 
 int main(void)
 {
-	int i;
+	usbd_device *usbd_dev;
+
+	rcc_clock_setup_pll(&rcc_hse8mhz_configs[RCC_CLOCK_HSE8_72MHZ]);
+	usbd_dev = usb_setup();
 
 	gpio_setup();
 
-	/* Blink the LED (PC8) on the board. */
-	while (1) {
-		/* Using API function gpio_toggle(): */
-		gpio_toggle(GPIOE, GPIO12);	/* LED on/off */
-		for (i = 0; i < 2000000; i++) /* Wait a bit. */
-			__asm__("nop");
+	for (int i = 0; 1; i = (i % 1000000) + 1) {
+		usbd_poll(usbd_dev);
 
+		if (i == 1) {
+			gpio_toggle(GPIOE, GPIO12);	/* LED on/off */
+			printf("Hello World\r\n");
+			fflush(stdout);
+		}
 	}
-
-	return 0;
 }
