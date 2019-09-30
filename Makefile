@@ -2,6 +2,8 @@
 ## This file is part of the libopencm3 project.
 ##
 ## Copyright (C) 2009 Uwe Hermann <uwe@hermann-uwe.de>
+## Copyright (C) 2010 Piotr Esden-Tempski <piotr@esden.net>
+## Copyright (C) 2013 Frantisek Burian <BuFran@seznam.cz>
 ##
 ## This library is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU Lesser General Public License as published by
@@ -17,85 +19,297 @@
 ## along with this library.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-PREFIX		?= arm-none-eabi-
-
-TARGETS		:= stm32/f0 stm32/f1 stm32/f2 stm32/f3 stm32/f4
-TARGETS		+= stm32/l0 stm32/l1 stm32/l4
-TARGETS		+= lpc/lpc13xx lpc/lpc17xx #lpc/lpc43xx
-TARGETS		+= tiva/lm3s tiva/lm4f
-TARGETS		+= efm32/efm32tg efm32/efm32g efm32/efm32lg efm32/efm32gg
-TARGETS		+= vf6xx
-TARGETS		+= sam/d
-
 # Be silent per default, but 'make V=1' will show all compiler calls.
 ifneq ($(V),1)
-Q := @
-# Do not print "Entering directory ...".
-MAKEFLAGS += --no-print-directory
+Q		:= @
+NULL		:= 2>/dev/null
 endif
 
-OPENCM3_DIR ?= $(realpath libopencm3)
-EXAMPLE_RULES = elf
+###############################################################################
+# Executables
 
-all: build
+PREFIX		?= arm-none-eabi-
 
-bin: EXAMPLE_RULES += bin
-hex: EXAMPLE_RULES += hex
-srec: EXAMPLE_RULES += srec
-list: EXAMPLE_RULES += list
-images: EXAMPLE_RULES += images
-
-bin: build
-hex: build
-srec: build
-list: build
-images: build
-
-build: lib examples
-
-lib:
-	$(Q)if [ ! "`ls -A $(OPENCM3_DIR)`" ] ; then \
-		printf "######## ERROR ########\n"; \
-		printf "\tlibopencm3 is not initialized.\n"; \
-		printf "\tPlease run:\n"; \
-		printf "\t$$ git submodule init\n"; \
-		printf "\t$$ git submodule update\n"; \
-		printf "\tbefore running make.\n"; \
-		printf "######## ERROR ########\n"; \
-		exit 1; \
-		fi
-	$(Q)$(MAKE) -C $(OPENCM3_DIR)
-
-EXAMPLE_DIRS:=$(sort $(dir $(wildcard $(addsuffix /*/*/Makefile,$(addprefix examples/,$(TARGETS))))))
-$(EXAMPLE_DIRS): lib
-	@printf "  BUILD   $@\n";
-	$(Q)$(MAKE) --directory=$@ OPENCM3_DIR=$(OPENCM3_DIR) $(EXAMPLE_RULES)
-
-examples: $(EXAMPLE_DIRS)
-	$(Q)true
-
-examplesclean: $(EXAMPLE_DIRS:=.clean)
-
-clean: examplesclean styleclean
-	$(Q)$(MAKE) -C libopencm3 clean
-
-stylecheck: $(EXAMPLE_DIRS:=.stylecheck)
-styleclean: $(EXAMPLE_DIRS:=.styleclean)
+CC		:= $(PREFIX)gcc
+CXX		:= $(PREFIX)g++
+LD		:= $(PREFIX)gcc
+AR		:= $(PREFIX)ar
+AS		:= $(PREFIX)as
+OBJCOPY		:= $(PREFIX)objcopy
+OBJDUMP		:= $(PREFIX)objdump
+GDB		:= $(PREFIX)gdb
+STFLASH		= $(shell which st-flash)
+STYLECHECK	:= /checkpatch.pl
+STYLECHECKFLAGS	:= --no-tree -f --terse --mailback
+STYLECHECKFILES	:= $(shell find . -name '*.[ch]')
+OPT		:= -Os
+DEBUG		:= -ggdb3
+CSTD		?= -std=c99
 
 
-%.clean:
-	$(Q)if [ -d $* ]; then \
-		printf "  CLEAN   $*\n"; \
-		$(MAKE) -C $* clean OPENCM3_DIR=$(OPENCM3_DIR) || exit $?; \
-	fi;
+
+###############################################################################
+# Project Spec
+
+BINARY = main
+
+LDSCRIPT = stm32f3-discovery.ld
+
+
+
+###############################################################################
+# from Makefile.include
+LIBNAME		= opencm3_stm32f3
+DEFS		+= -DSTM32F3
+
+FP_FLAGS	?= -mfloat-abi=hard -mfpu=fpv4-sp-d16
+ARCH_FLAGS	= -mthumb -mcpu=cortex-m4 $(FP_FLAGS)
+
+################################################################################
+# OpenOCD specific variables
+
+OOCD		?= openocd
+OOCD_INTERFACE	?= stlink-v2
+OOCD_TARGET	?= stm32f3x
+
+################################################################################
+# Black Magic Probe specific variables
+# Set the BMP_PORT to a serial port and then BMP is used for flashing
+BMP_PORT	?=
+
+################################################################################
+# texane/stlink specific variables
+#STLINK_PORT	?= :4242
+
+
+
+
+
+###############################################################################
+# Source files
+
+OBJS		+= $(BINARY).o
+
+
+ifeq ($(strip $(OPENCM3_DIR)),)
+# user has not specified the library path, so we try to detect it
+
+# where we search for the library
+LIBPATHS := ./libopencm3 ./../libopencm3 ./../../libopencm3
+
+OPENCM3_DIR := $(wildcard $(LIBPATHS:=/locm3.sublime-project))
+OPENCM3_DIR := $(firstword $(dir $(OPENCM3_DIR)))
+
+ifeq ($(strip $(OPENCM3_DIR)),)
+$(warning Cannot find libopencm3 library in the standard search paths.)
+$(error Please specify it through OPENCM3_DIR variable!)
+endif
+endif
+
+ifeq ($(V),1)
+$(info Using $(OPENCM3_DIR) path to library)
+endif
+
+define ERR_DEVICE_LDSCRIPT_CONFLICT
+You can either specify DEVICE=blah, and have the LDSCRIPT generated,
+or you can provide LDSCRIPT, and ensure CPPFLAGS, LDFLAGS and LDLIBS
+all contain the correct values for the target you wish to use.
+You cannot provide both!
+endef
+
+ifeq ($(strip $(DEVICE)),)
+# Old style, assume LDSCRIPT exists
+DEFS		+= -I$(OPENCM3_DIR)/include
+LDFLAGS		+= -L$(OPENCM3_DIR)/lib
+LDLIBS		+= -l$(LIBNAME)
+LDSCRIPT	?= $(BINARY).ld
+else
+# New style, assume device is provided, and we're generating the rest.
+ifneq ($(strip $(LDSCRIPT)),)
+$(error $(ERR_DEVICE_LDSCRIPT_CONFLICT))
+endif
+include $(OPENCM3_DIR)/mk/genlink-config.mk
+endif
+
+OPENCM3_SCRIPT_DIR = $(OPENCM3_DIR)/scripts
+EXAMPLES_SCRIPT_DIR	= $(OPENCM3_DIR)/../scripts
+
+###############################################################################
+# C flags
+
+TGT_CFLAGS	+= $(OPT) $(CSTD) $(DEBUG)
+TGT_CFLAGS	+= $(ARCH_FLAGS)
+TGT_CFLAGS	+= -Wextra -Wshadow -Wimplicit-function-declaration
+TGT_CFLAGS	+= -Wredundant-decls -Wmissing-prototypes -Wstrict-prototypes
+TGT_CFLAGS	+= -fno-common -ffunction-sections -fdata-sections
+
+###############################################################################
+# C++ flags
+
+TGT_CXXFLAGS	+= $(OPT) $(CXXSTD) $(DEBUG)
+TGT_CXXFLAGS	+= $(ARCH_FLAGS)
+TGT_CXXFLAGS	+= -Wextra -Wshadow -Wredundant-decls  -Weffc++
+TGT_CXXFLAGS	+= -fno-common -ffunction-sections -fdata-sections
+
+###############################################################################
+# C & C++ preprocessor common flags
+
+TGT_CPPFLAGS	+= -MD
+TGT_CPPFLAGS	+= -Wall -Wundef
+TGT_CPPFLAGS	+= $(DEFS)
+
+###############################################################################
+# Linker flags
+
+TGT_LDFLAGS		+= --static -nostartfiles
+TGT_LDFLAGS		+= -T$(LDSCRIPT)
+TGT_LDFLAGS		+= $(ARCH_FLAGS) $(DEBUG)
+TGT_LDFLAGS		+= -Wl,-Map=$(*).map -Wl,--cref
+TGT_LDFLAGS		+= -Wl,--gc-sections
+ifeq ($(V),99)
+TGT_LDFLAGS		+= -Wl,--print-gc-sections
+endif
+
+###############################################################################
+# Used libraries
+
+LDLIBS		+= -Wl,--start-group -lc -lgcc -lnosys -Wl,--end-group
+
+###############################################################################
+###############################################################################
+###############################################################################
+
+.SUFFIXES: .elf .bin .hex .srec .list .map .images
+.SECONDEXPANSION:
+.SECONDARY:
+
+all: bin
+
+elf: $(BINARY).elf
+bin: $(BINARY).bin
+hex: $(BINARY).hex
+srec: $(BINARY).srec
+list: $(BINARY).list
+GENERATED_BINARIES=$(BINARY).elf $(BINARY).bin $(BINARY).hex $(BINARY).srec $(BINARY).list $(BINARY).map
+
+images: $(BINARY).images
+flash: $(BINARY).flash
+erase: stlink-erase
+
+stlink-erase:
+	@printf "  ERASE   $<\n"
+	$(STFLASH) erase
+
+
+# Either verify the user provided LDSCRIPT exists, or generate it.
+ifeq ($(strip $(DEVICE)),)
+$(LDSCRIPT):
+    ifeq (,$(wildcard $(LDSCRIPT)))
+        $(error Unable to find specified linker script: $(LDSCRIPT))
+    endif
+else
+include $(OPENCM3_DIR)/mk/genlink-rules.mk
+endif
+
+$(OPENCM3_DIR)/lib/lib$(LIBNAME).a:
+ifeq (,$(wildcard $@))
+	$(warning $(LIBNAME).a not found, attempting to rebuild in $(OPENCM3_DIR))
+	$(MAKE) -C $(OPENCM3_DIR)
+endif
+
+# Define a helper macro for debugging make errors online
+# you can type "make print-OPENCM3_DIR" and it will show you
+# how that ended up being resolved by all of the included
+# makefiles.
+print-%:
+	@echo $*=$($*)
+
+%.images: %.bin %.hex %.srec %.list %.map
+	@#printf "*** $* images generated ***\n"
+
+%.bin: %.elf
+	@#printf "  OBJCOPY $(*).bin\n"
+	$(Q)$(OBJCOPY) -Obinary $(*).elf $(*).bin
+
+%.hex: %.elf
+	@#printf "  OBJCOPY $(*).hex\n"
+	$(Q)$(OBJCOPY) -Oihex $(*).elf $(*).hex
+
+%.srec: %.elf
+	@#printf "  OBJCOPY $(*).srec\n"
+	$(Q)$(OBJCOPY) -Osrec $(*).elf $(*).srec
+
+%.list: %.elf
+	@#printf "  OBJDUMP $(*).list\n"
+	$(Q)$(OBJDUMP) -S $(*).elf > $(*).list
+
+%.elf %.map: $(OBJS) $(LDSCRIPT) $(OPENCM3_DIR)/lib/lib$(LIBNAME).a
+	@#printf "  LD      $(*).elf\n"
+	$(Q)$(LD) $(TGT_LDFLAGS) $(LDFLAGS) $(OBJS) $(LDLIBS) -o $(*).elf
+
+%.o: %.c
+	@#printf "  CC      $(*).c\n"
+	$(Q)$(CC) $(TGT_CFLAGS) $(CFLAGS) $(TGT_CPPFLAGS) $(CPPFLAGS) -o $(*).o -c $(*).c
+
+%.o: %.cxx
+	@#printf "  CXX     $(*).cxx\n"
+	$(Q)$(CXX) $(TGT_CXXFLAGS) $(CXXFLAGS) $(TGT_CPPFLAGS) $(CPPFLAGS) -o $(*).o -c $(*).cxx
+
+%.o: %.cpp
+	@#printf "  CXX     $(*).cpp\n"
+	$(Q)$(CXX) $(TGT_CXXFLAGS) $(CXXFLAGS) $(TGT_CPPFLAGS) $(CPPFLAGS) -o $(*).o -c $(*).cpp
+
+clean:
+	@#printf "  CLEAN\n"
+	$(Q)$(RM) $(GENERATED_BINARIES) generated.* $(OBJS) $(OBJS:%.o=%.d)
+
+stylecheck: $(STYLECHECKFILES:=.stylecheck)
+styleclean: $(STYLECHECKFILES:=.styleclean)
+
+# the cat is due to multithreaded nature - we like to have consistent chunks of text on the output
+%.stylecheck: %
+	$(Q)$(OPENCM3_SCRIPT_DIR)$(STYLECHECK) $(STYLECHECKFLAGS) $* > $*.stylecheck; \
+		if [ -s $*.stylecheck ]; then \
+			cat $*.stylecheck; \
+		else \
+			rm -f $*.stylecheck; \
+		fi;
 
 %.styleclean:
-	$(Q)$(MAKE) -C $* styleclean OPENCM3_DIR=$(OPENCM3_DIR)
-
-%.stylecheck:
-	$(Q)$(MAKE) -C $* stylecheck OPENCM3_DIR=$(OPENCM3_DIR)
+	$(Q)rm -f $*.stylecheck;
 
 
-.PHONY: build lib examples $(EXAMPLE_DIRS) install clean stylecheck styleclean \
-        bin hex srec list images
+%.stlink-flash: %.bin
+	@printf "  FLASH   $<\n"
+	$(STFLASH) write $(*).bin 0x08000000
 
+ifeq ($(BMP_PORT),)
+ifeq ($(OOCD_FILE),)
+%.flash: %.elf
+	@printf "  FLASH   $<\n"
+	(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
+		$(OOCD) -f interface/$(OOCD_INTERFACE).cfg \
+		-f target/$(OOCD_TARGET).cfg \
+		-c "program $(*).elf verify reset exit" \
+		$(NULL)
+else
+%.flash: %.elf
+	@printf "  FLASH   $<\n"
+	(echo "halt; program $(realpath $(*).elf) verify reset" | nc -4 localhost 4444 2>/dev/null) || \
+		$(OOCD) -f $(OOCD_FILE) \
+		-c "program $(*).elf verify reset exit" \
+		$(NULL)
+endif
+else
+%.flash: %.elf
+	@printf "  GDB   $(*).elf (flash)\n"
+	$(GDB) --batch \
+		   -ex 'target extended-remote $(BMP_PORT)' \
+		   -x $(EXAMPLES_SCRIPT_DIR)/black_magic_probe_flash.scr \
+		   $(*).elf
+endif
+
+
+.PHONY: images clean stylecheck styleclean elf bin hex srec list
+
+-include $(OBJS:.o=.d)
