@@ -88,7 +88,7 @@ BMP_PORT	?=
 ###############################################################################
 # Source files
 
-OBJS		+= $(BINARY).o usb.o
+OBJS		+= $(BINARY).o log.o usb.o
 
 
 ifeq ($(strip $(OPENCM3_DIR)),)
@@ -200,6 +200,13 @@ stlink-erase:
 	@printf "  ERASE   $<\n"
 	$(STFLASH) erase
 
+serial: flash
+	$(eval BUS := $(shell lsusb -d 0x0483:0x5740 | cut -c5-7))
+	$(eval DEV := $(shell lsusb -d 0x0483:0x5740 | cut -c16-18))
+	@printf "  RESET   /dev/bus/usb/$(BUS)/$(DEV)\n"
+	sudo usbreset/usbreset /dev/bus/usb/$(BUS)/$(DEV)
+	@printf "  SERIAL  /dev/ttyACM0$<\n"
+	screen /dev/ttyACM0
 
 # Either verify the user provided LDSCRIPT exists, or generate it.
 ifeq ($(strip $(DEVICE)),)

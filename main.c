@@ -23,33 +23,38 @@
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/usb/usbd.h>
 
+#include <libopencm3/stm32/can.h>
+
+#define LOGLEVEL 6  // LOGL_TRACE
+#include "log.h"
 #include "usb.h"
 
 static void gpio_setup(void)
 {
-	/* Enable GPIOE clock. */
-	rcc_periph_clock_enable(RCC_GPIOE);
+    /* Enable GPIOE clock. */
+    rcc_periph_clock_enable(RCC_GPIOE);
 
-	/* Set GPIO12 (in GPIO port E) to 'output push-pull'. */
-	gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO12);
+    /* Set GPIO12 (in GPIO port E) to 'output push-pull'. */
+    gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO12);
 }
 
-int main(void)
-{
-	usbd_device *usbd_dev;
+int main(void) {
+    usbd_device *usbd_dev;
 
-	rcc_clock_setup_pll(&rcc_hse8mhz_configs[RCC_CLOCK_HSE8_72MHZ]);
-	usbd_dev = usb_setup();
+    rcc_clock_setup_pll(&rcc_hse8mhz_configs[RCC_CLOCK_HSE8_72MHZ]);
+    gpio_setup();
+    usbd_dev = usb_setup();
 
-	gpio_setup();
+    for (int i = 0; 1; i = (i % 1000000) + 1) {
+        usbd_poll(usbd_dev);
 
-	for (int i = 0; 1; i = (i % 1000000) + 1) {
-		usbd_poll(usbd_dev);
+        if (i == 1) {
+            gpio_toggle(GPIOE, GPIO12);
 
-		if (i == 1) {
-			gpio_toggle(GPIOE, GPIO12);	/* LED on/off */
-			printf("Hello World\r\n");
-			fflush(stdout);
-		}
-	}
+            //usbd_ep_write_packet(usbd_dev, 0x82, "Hello World!\r\n", 14);
+            //_write(stderr, "Hello World!\r\n", 14);
+            //fprintf(stderr, "Hello World!\r\n");
+            LOG_ERROR("Hello World!");
+        }
+    }
 }

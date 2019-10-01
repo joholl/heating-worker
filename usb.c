@@ -260,6 +260,9 @@ int _write (int file, char *buf, int nbytes)
         }
 
         usbd_ep_write_packet(debug_ctx.usbd_dev, 0x82, buf, burst_len);
+        for (int i = 0; i < 100; i++) {
+            usbd_poll(debug_ctx.usbd_dev);
+        }
 
         buf += burst_len;
         nbytes -= burst_len;
